@@ -12,11 +12,15 @@ from flask import Flask
 
 import os
 import psycopg2
-from flask import Flask
+import os
+from flask import Flask, render_template, request, redirect, url_for, session, flash
+from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  # allow frontend calls from GitHub Pages etc.
+CORS(app)
+app.secret_key = os.getenv("SECRET_KEY", "your_secret_key_here")
+
 
 def connect_db():
     return psycopg2.connect(
