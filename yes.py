@@ -1,13 +1,6 @@
-import mysql.connector
-
 import psycopg2
 import os
-# ----------------- Database Connection -----------------
-import os
-import psycopg2
-import os
-from flask import Flask, render_template, request, redirect, url_for, session, flash
-from werkzeug.security import generate_password_hash, check_password_hash
+from flask import Flask
 from flask_cors import CORS
 
 app = Flask(__name__)
@@ -23,25 +16,20 @@ def connect_db():
         password=os.getenv("DB_PASSWORD")
     )
 
-
 # Check Database Connection
 def test_database_connection():
     try:
         conn = connect_db()
         cursor = conn.cursor()
-        
-        # Run a simple query to check the connection
         cursor.execute("SELECT 1")
         result = cursor.fetchone()
-        
         if result:
-            print("Database connection successful!")
+            print("✅ Database connection successful!")
         else:
-            print("Database connection failed!")
-        
+            print("❌ Database connection failed!")
         conn.close()
-    except mysql.connector.Error as err:
+    except Exception as err:
         print(f"Error: {err}")
-    
+
 # Test the connection
 test_database_connection()

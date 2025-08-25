@@ -1,22 +1,19 @@
-
-
-# ----------------- Database Connection -----------------
+# ----------------- Imports -----------------
 import os
 import psycopg2
-from flask import Flask
-
-import os
-import psycopg2
-import os
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
+from datetime import datetime
+import random
+import uuid
 
+# ----------------- Flask App -----------------
 app = Flask(__name__)
 CORS(app)
 app.secret_key = os.getenv("SECRET_KEY", "your_secret_key_here")
 
-
+# ----------------- Database Connection -----------------
 def connect_db():
     return psycopg2.connect(
         host=os.getenv("DB_HOST"),
@@ -25,7 +22,6 @@ def connect_db():
         user=os.getenv("DB_USER"),
         password=os.getenv("DB_PASSWORD")
     )
-
 
 # ----------------- LOGIN -----------------
 @app.route('/login', methods=['GET', 'POST'])
@@ -126,7 +122,7 @@ def book_ticket():
 def search_flights():
     source      = request.args.get('source')
     destination = request.args.get('destination')
-    date        = request.args.get('date')  # keep for display only
+    date        = request.args.get('date')
 
     conn   = connect_db()
     cursor = conn.cursor()
@@ -145,7 +141,6 @@ def search_flights():
                            destination=destination,
                            selected_date=date)
 
-
 # ----------------- BOOK TICKET PAGE -----------------
 @app.route('/book_ticket/<int:flight_id>', methods=['GET', 'POST'])
 def booking(flight_id):
@@ -155,14 +150,13 @@ def booking(flight_id):
     conn = connect_db()
     cursor = conn.cursor()
 
-    # Fetch flight details including price
     cursor.execute("SELECT flight_number, source, destination, price FROM flights WHERE id=%s", (flight_id,))
     flight = cursor.fetchone()
 
     if not flight:
         return "Flight not found", 404
 
-    flight_number, source, destination, price = flight  # Unpack the price as well
+    flight_number, source, destination, price = flight
 
     if request.method == 'POST':
         date = request.form['date']
@@ -206,9 +200,7 @@ def booking(flight_id):
 
         return redirect(url_for('payment'))
 
-    # Handle GET request – set default date (today or blank)
     date = request.args.get('date', '')
-
     return render_template("booking.html", 
                            flight_id=flight_id, 
                            flight_number=flight_number, 
@@ -216,14 +208,7 @@ def booking(flight_id):
                            source=source, 
                            destination=destination)
 
-
-from datetime import datetime
-import random
-from flask import render_template, request, redirect, url_for, session
-import uuid
-import mysql.connector
-
-
+# ----------------- PAYMENT -----------------
 @app.route('/payment', methods=['GET', 'POST'])
 def payment():
     if 'user_id' not in session:
@@ -251,7 +236,7 @@ def payment():
         booking['payment_time'] = payment_time
         session['booking_details'] = booking
 
-        return redirect(url_for('payment_success'))  # ✅ Redirect added
+        return redirect(url_for('payment_success'))
 
     return render_template("payment.html", total_amount=booking['total_amount'])
 
@@ -274,15 +259,15 @@ def payment_success():
                            source=booking['source'],
                            destination=booking['destination'],
                            selected_date=booking['selected_date'])
- 
+
+# ----------------- MY BOOKINGS -----------------
 @app.route('/my_bookings')
 def my_bookings():
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
     conn = connect_db()
-    cursor = conn.cursor(dictionary=True)
-
+    cursor = conn.cursor()
     cursor.execute("""
         SELECT b.transaction_id, b.date AS selected_date, f.flight_number, f.source, f.destination, f.price,
                b.passenger_name AS name, b.age, b.gender, b.nationality
@@ -300,24 +285,24 @@ def my_bookings():
 
     grouped_bookings = {}
     for row in rows:
-        txn = row['transaction_id']
+        txn = row[0]
         if txn not in grouped_bookings:
             grouped_bookings[txn] = {
                 'transaction_id': txn,
-                'selected_date': row['selected_date'],
-                'flight_number': row['flight_number'],
-                'source': row['source'],
-                'destination': row['destination'],
+                'selected_date': row[1],
+                'flight_number': row[2],
+                'source': row[3],
+                'destination': row[4],
                 'total_amount': 0,
                 'passengers': []
             }
         grouped_bookings[txn]['passengers'].append({
-            'name': row['name'],
-            'age': row['age'],
-            'gender': row['gender'],
-            'nationality': row['nationality']
+            'name': row[6],
+            'age': row[7],
+            'gender': row[8],
+            'nationality': row[9]
         })
-        grouped_bookings[txn]['total_amount'] += row['price']
+        grouped_bookings[txn]['total_amount'] += row[5]
 
     return render_template('my_bookings.html', bookings=list(grouped_bookings.values()))
 
@@ -328,59 +313,46 @@ def cancel_booking(transaction_id):
         return redirect(url_for('login'))
 
     conn = connect_db()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
 
-    # Step 1: Get all bookings for this transaction_id and user
     cursor.execute("""
         SELECT b.id, b.flight_id
         FROM bookings b
         WHERE b.transaction_id = %s AND b.user_id = %s
     """, (transaction_id, session['user_id']))
-
     bookings = cursor.fetchall()
 
     if not bookings:
         conn.close()
-        return redirect(url_for('dashboard'))  # Redirect to dashboard if no booking found
+        return redirect(url_for('dashboard'))
 
     if request.method == 'POST':
-        # Step 2: Cancel the bookings
         for booking in bookings:
             cursor.execute("""
                 UPDATE flights
                 SET available_seats = available_seats + 1
                 WHERE id = %s
-            """, (booking['flight_id'],))
+            """, (booking[1],))
 
-        # Step 2.2: Now, delete the booking entries
         cursor.execute("""
             DELETE FROM bookings
             WHERE transaction_id = %s AND user_id = %s
         """, (transaction_id, session['user_id']))
-
         conn.commit()
         conn.close()
 
-        # After cancellation, show a success message and provide an option to go to the dashboard
         cancel_message = "Booking successfully cancelled and refund initiated!"
         return render_template('cancel_booking.html', transaction_id=transaction_id, cancel_message=cancel_message)
 
     conn.close()
     return render_template('cancel_booking.html', transaction_id=transaction_id)
+
+# ----------------- GENERAL -----------------
 @app.route('/general')
 def general_info():
     return render_template('general.html')
 
-
-#-------------------------------MANAGE PROFILE------------------------------------
-
-
-
-
-
-
-
-
+# ----------------- MANAGE PROFILE -----------------
 @app.route('/manage_profile', methods=['GET', 'POST'])
 def manage_profile():
     if 'user_id' not in session:
@@ -388,7 +360,7 @@ def manage_profile():
 
     user_id = session['user_id']
     conn = connect_db()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
 
     if request.method == 'POST':
         name = request.form['name']
@@ -428,14 +400,13 @@ def manage_profile():
         flash('Profile updated successfully!', 'success')
         return redirect(url_for('dashboard'))
 
-    # GET method - fetch existing user data
     cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
     user = cursor.fetchone()
     conn.close()
 
-    return render_template('manage_profile.html', user=user)   # ✅ added this
-#-----------------------------------customer support-----------------------------------
+    return render_template('manage_profile.html', user=user)
 
+# ----------------- CUSTOMER SUPPORT -----------------
 @app.route('/customer_support', methods=['GET', 'POST'])
 def customer_support():
     if 'user_id' not in session:
@@ -443,44 +414,34 @@ def customer_support():
 
     user_id = session['user_id']
     conn = connect_db()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
 
     if request.method == 'POST':
         message = request.form['message'].strip()
-        timestamp = datetime.datetime.now()
+        timestamp = datetime.now()
 
         if message:
-            # Insert user message into database
-            insert_query = """  
+            cursor.execute("""  
                 INSERT INTO support_chat (user_id, message, timestamp)  
                 VALUES (%s, %s, %s) 
-            """
-            cursor.execute(insert_query, (user_id, message, timestamp))
+            """, (user_id, message, timestamp))
             conn.commit()
 
-            # Simulated bot response (basic automated reply)
             bot_response = "Thank you for your message! Our support team will assist you shortly."
-            cursor.execute(insert_query, (0, bot_response, timestamp))  # 0 represents bot messages
+            cursor.execute("""INSERT INTO support_chat (user_id, message, timestamp) VALUES (%s, %s, %s)""",
+                           (0, bot_response, timestamp))
             conn.commit()
 
-    # Fetch chat history
-    cursor.execute("SELECT * FROM support_chat WHERE user_id = %s OR user_id = 0 ORDER BY timestamp", (user_id,))
+    cursor.execute("SELECT user_id, message, timestamp FROM support_chat WHERE user_id = %s OR user_id = 0 ORDER BY timestamp", (user_id,))
     chat_history = cursor.fetchall()
-
     conn.close()
 
     return render_template('customer_support.html', chat_history=chat_history)
 
-
-#--------------------------------upload delay----------------------------------------
+# ----------------- UPLOAD DELAY -----------------
 @app.route("/upload_delay", methods=["GET", "POST"])
 def upload_delay():
-    conn = mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="",
-        database="flight_db"
-    )
+    conn = connect_db()
     cursor = conn.cursor()
 
     if request.method == "POST":
@@ -488,30 +449,20 @@ def upload_delay():
         delay_minutes = int(request.form["delay_minutes"])  
         reason = request.form["reason"]
 
-        try:
-            sql = "INSERT INTO flight_delays (flight_number, delay_minutes, reason) VALUES (%s, %s, %s)"
-            cursor.execute(sql, (flight_number, delay_minutes, reason))
-            conn.commit()
-        except Exception as e:
-            print(f"Database commit error: {e}")  
+        cursor.execute("INSERT INTO flight_delays (flight_number, delay_minutes, reason) VALUES (%s, %s, %s)",
+                       (flight_number, delay_minutes, reason))
+        conn.commit()
 
         cursor.close()
         conn.close()
-
         return redirect(url_for("upload_delay"))  
 
-    # Fetch delay data
     cursor.execute("SELECT * FROM flight_delays ORDER BY id DESC")
     delays = cursor.fetchall()
-    
     cursor.close()
     conn.close()
 
     return render_template("upload_delay.html", delays=delays)
-
-if __name__ == "__main__":
-    app.run(debug=True)
-
 
 # ----------------- RUN APP -----------------
 if __name__ == '__main__':
